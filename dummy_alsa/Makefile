@@ -5,7 +5,8 @@
 
 KERN_DIR := /lib/modules/$(shell uname -r)/build
 
-obj-m := foo.o
+obj-m += foo.o
+obj-m += dummy.o
 
 all:
 	$(MAKE) -C $(KERN_DIR) M=`pwd` modules

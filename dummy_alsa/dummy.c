@@ -68,7 +68,7 @@ static int pcm_substreams[SNDRV_CARDS] = {[0 ... (SNDRV_CARDS - 1)] = 8};
 #ifdef CONFIG_HIGH_RES_TIMERS
 static bool hrtimer = 1;
 #endif
-static bool fake_buffer = 1;
+static bool fake_buffer = 0;
 
 module_param_array(index, int, NULL, 0444);
 MODULE_PARM_DESC(index, "Index value for dummy soundcard.");
@@ -562,6 +562,8 @@ static int dummy_pcm_open(struct snd_pcm_substream *substream)
 	const struct dummy_timer_ops *ops;
 	int err;
 
+	dump_stack();
+
 	ops = &dummy_systimer_ops;
 #ifdef CONFIG_HIGH_RES_TIMERS
 	if (hrtimer)
@@ -596,12 +598,15 @@ static int dummy_pcm_open(struct snd_pcm_substream *substream)
 		get_dummy_ops(substream)->free(substream);
 		return err;
 	}
+
 	return 0;
 }
 
 static int dummy_pcm_close(struct snd_pcm_substream *substream)
 {
 	get_dummy_ops(substream)->free(substream);
+
+	dump_stack();
 	return 0;
 }
 

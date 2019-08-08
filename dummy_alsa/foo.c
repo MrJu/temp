@@ -16,6 +16,7 @@
 #include <sound/initval.h>
 #include <sound/pcm.h>
 #include <linux/platform_device.h>
+#include <linux/hrtimer.h>
 
 #define STR(x) _STR(x)
 #define _STR(x) #x
@@ -28,6 +29,45 @@
 #define VERSION STR(VERSION_PREFIX-MAJOR_VERSION.MINOR_VERSION.PATCH_VERSION)
 
 #define DEVICE_NAME "dummy-card"
+
+#define MS_TO_NS(x) (x * 1E6L)
+#define DELAY_MS 1L
+
+static struct hrtimer timer;
+ktime_t kt;
+unsigned int pos;
+struct snd_pcm_substream *subs;
+
+static enum hrtimer_restart  hrtimer_handler(struct hrtimer *timer)
+{
+	printk("%s(): %d\n", __func__, __LINE__);
+
+	pos += 48;
+	if (pos >= 1024)
+		pos -= 1024;
+
+	if (subs)
+		snd_pcm_period_elapsed(subs);
+
+	hrtimer_forward_now(timer, kt);
+	return HRTIMER_RESTART;
+}
+
+static int timer_start(void)
+{
+	kt = ktime_set(0, MS_TO_NS(DELAY_MS));
+	hrtimer_init(&timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	timer.function = hrtimer_handler;
+	hrtimer_start(&timer, kt, HRTIMER_MODE_REL);
+
+	return 0;
+}
+
+static void timer_stop(void)
+{
+	hrtimer_cancel(&timer);
+}
+
 
 static const struct snd_pcm_hardware dummy_pcm_hardware = {
 	.info =			SNDRV_PCM_INFO_MMAP |
@@ -56,31 +96,73 @@ static const struct snd_pcm_hardware dummy_pcm_hardware = {
 static int dummy_pcm_open(struct snd_pcm_substream *substream)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
+	subs = substream;
 
 	runtime->hw = dummy_pcm_hardware;
+
+	if (substream->pcm->device & 1) {
+		runtime->hw.info &= ~SNDRV_PCM_INFO_INTERLEAVED;
+		runtime->hw.info |= SNDRV_PCM_INFO_NONINTERLEAVED;
+	}
+	if (substream->pcm->device & 2)
+		runtime->hw.info &= ~(SNDRV_PCM_INFO_MMAP |
+				      SNDRV_PCM_INFO_MMAP_VALID);
+
+#if 0
+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+		if (model->playback_constraints)
+			err = model->playback_constraints(substream->runtime);
+	} else {
+		if (model->capture_constraints)
+			err = model->capture_constraints(substream->runtime);
+	}
+#endif
+
+	printk("%s(): %d\n", __func__, __LINE__);
 
 	return 0;
 }
 
 static int dummy_pcm_close(struct snd_pcm_substream *substream)
 {
+	subs = NULL;
+	printk("%s(): %d\n", __func__, __LINE__);
 	return 0;
 }
 
 static int dummy_pcm_hw_params(struct snd_pcm_substream *substream,
 			struct snd_pcm_hw_params *hw_params)
 {
-	return snd_pcm_lib_malloc_pages(substream,
+	int ret;
+
+	if (PCM_RUNTIME_CHECK(substream)) {
+		printk("%s(): %d %d\n", __func__, __LINE__);
+		return -EINVAL;
+	}
+
+	if (snd_BUG_ON(substream->dma_buffer.dev.type ==
+		       SNDRV_DMA_TYPE_UNKNOWN)) {
+		printk("%s(): %d %d\n", __func__, __LINE__);
+		return -EINVAL;
+	}
+
+	ret = snd_pcm_lib_malloc_pages(substream,
 			params_buffer_bytes(hw_params));
+
+	printk("%s(): %d %d\n", __func__, __LINE__, ret);
+
+	return ret;
 }
 
 static int dummy_pcm_hw_free(struct snd_pcm_substream *substream)
 {
+	printk("%s(): %d\n", __func__, __LINE__);
 	return snd_pcm_lib_free_pages(substream);
 }
 
 static int dummy_pcm_prepare(struct snd_pcm_substream *substream)
 {
+	printk("%s(): %d\n", __func__, __LINE__);
 	return 0;
 }
 
@@ -89,17 +171,22 @@ static int dummy_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
 	case SNDRV_PCM_TRIGGER_RESUME:
+		timer_start();
 		return 0;
 	case SNDRV_PCM_TRIGGER_STOP:
 	case SNDRV_PCM_TRIGGER_SUSPEND:
+		timer_stop();
 		return 0;
 	}
+
 	return -EINVAL;
 }
 
 static snd_pcm_uframes_t dummy_pcm_pointer(struct snd_pcm_substream *substream)
 {
-	return 128;
+	printk("%s(): %d\n", __func__, __LINE__);
+	dump_stack();
+	return pos;
 }
 
 static struct snd_pcm_ops dummy_pcm_ops = {
@@ -123,21 +210,30 @@ static int dummy_probe(struct platform_device *pdev)
 			SNDRV_DEFAULT_STR1, THIS_MODULE, 0, &card);
 	if (ret < 0)
 		return ret;
- 
+
+ 	ret = snd_pcm_new(card, "Dummy PCM", 0, 1, 1, &pcm);
+	if (ret < 0)
+		return ret;
+
+	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK, &dummy_pcm_ops);
+	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &dummy_pcm_ops);
+
+	pcm->info_flags = 0;
+	strcpy(pcm->name, "Dummy PCM");
+	strcpy(card->driver, "Dummy");
+	strcpy(card->shortname, "Dummy");
+	sprintf(card->longname, "Dummy 0");
+
+	snd_pcm_lib_preallocate_pages_for_all(pcm,
+		SNDRV_DMA_TYPE_CONTINUOUS,
+		snd_dma_continuous_data(GFP_KERNEL),
+		0, 64*1024);
+
 	ret = snd_card_register(card);
 	if (ret) {
 		printk("%s(): %d\n", __func__, __LINE__);
 		return ret;
 	}
-
-	ret = snd_pcm_new(card, "Dummy PCM", 0, 1, 1, &pcm);
-	if (ret < 0) {
-		snd_card_free(card);
-		return ret;
-	}
-
-	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK, &dummy_pcm_ops);
-	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &dummy_pcm_ops);
 
 	platform_set_drvdata(pdev, card);
 
