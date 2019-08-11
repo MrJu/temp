@@ -169,22 +169,10 @@ static int dummy_pcm_prepare(struct snd_pcm_substream *substream)
 	unsigned int rate = runtime->rate;
 	unsigned long secs, nsecs;
 
-	printk("%s(): %d period_size = %lu rate = %u\n",
-			__func__, __LINE__, period_size, rate);
-
 	secs = period_size / rate;
-	printk("%s(): %d secs = %lu\n", __func__, __LINE__, secs);
-
 	period_size %= rate;
-	printk("%s(): %d period_size = %lu\n", __func__, __LINE__, period_size);
-
 	nsecs = div_u64((u64)period_size * 1000000000UL + rate - 1, rate);
-	printk("%s(): %d nsecs = %lu\n", __func__, __LINE__, nsecs);
-
 	kt = ktime_set(secs, nsecs);
-	// kt = ktime_set(0, MS_TO_NS(DELAY_MS));
-
-	printk("%s(): %d %lu %lu\n", __func__, __LINE__, secs, nsecs);
 
 	printk("%s(): %d\n", __func__, __LINE__);
 	return 0;
