@@ -35,19 +35,21 @@
 
 static struct hrtimer timer;
 ktime_t kt;
-unsigned int pos;
+unsigned long int pos;
 struct snd_pcm_substream *subs;
 
 static enum hrtimer_restart  hrtimer_handler(struct hrtimer *timer)
 {
+	struct snd_pcm_substream *substream = subs;
+
 	printk("%s(): %d\n", __func__, __LINE__);
 
-	pos += 48;
-	if (pos >= 1024)
-		pos -= 1024;
+	pos += snd_pcm_lib_period_bytes(substream);
+	if (pos >= snd_pcm_lib_buffer_bytes(substream))
+		pos = 0;
 
-	if (subs)
-		snd_pcm_period_elapsed(subs);
+	if (substream)
+		snd_pcm_period_elapsed(substream);
 
 	hrtimer_forward_now(timer, kt);
 	return HRTIMER_RESTART;
@@ -96,6 +98,9 @@ static const struct snd_pcm_hardware dummy_pcm_hardware = {
 static int dummy_pcm_open(struct snd_pcm_substream *substream)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
+	snd_pcm_uframes_t period_size = runtime->period_size;
+	unsigned int rate = runtime->rate;
+	unsigned long secs, nsecs;
 	subs = substream;
 
 	runtime->hw = dummy_pcm_hardware;
@@ -118,6 +123,11 @@ static int dummy_pcm_open(struct snd_pcm_substream *substream)
 	}
 #endif
 
+	secs = period_size / rate;
+	period_size %= rate;
+	nsecs = div_u64((u64)period_size * 1000000000UL + rate - 1, rate);
+	kt = ktime_set(secs, nsecs);
+
 	printk("%s(): %d\n", __func__, __LINE__);
 
 	return 0;
@@ -136,13 +146,13 @@ static int dummy_pcm_hw_params(struct snd_pcm_substream *substream,
 	int ret;
 
 	if (PCM_RUNTIME_CHECK(substream)) {
-		printk("%s(): %d %d\n", __func__, __LINE__);
+		printk("%s(): %d\n", __func__, __LINE__);
 		return -EINVAL;
 	}
 
 	if (snd_BUG_ON(substream->dma_buffer.dev.type ==
 		       SNDRV_DMA_TYPE_UNKNOWN)) {
-		printk("%s(): %d %d\n", __func__, __LINE__);
+		printk("%s(): %d\n", __func__, __LINE__);
 		return -EINVAL;
 	}
 
@@ -185,8 +195,7 @@ static int dummy_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 static snd_pcm_uframes_t dummy_pcm_pointer(struct snd_pcm_substream *substream)
 {
 	printk("%s(): %d\n", __func__, __LINE__);
-	dump_stack();
-	return pos;
+	return bytes_to_frames(substream->runtime, pos);
 }
 
 static struct snd_pcm_ops dummy_pcm_ops = {
