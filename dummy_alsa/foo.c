@@ -38,9 +38,10 @@ ktime_t kt;
 unsigned long int pos;
 struct snd_pcm_substream *subs;
 
-static enum hrtimer_restart  hrtimer_handler(struct hrtimer *timer)
+static enum hrtimer_restart hrtimer_handler(struct hrtimer *timer)
 {
 	struct snd_pcm_substream *substream = subs;
+	unsigned long int delta;
 
 	printk("%s(): %d\n", __func__, __LINE__);
 
@@ -57,10 +58,9 @@ static enum hrtimer_restart  hrtimer_handler(struct hrtimer *timer)
 
 static int timer_start(void)
 {
-	kt = ktime_set(0, MS_TO_NS(DELAY_MS));
-	hrtimer_init(&timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	hrtimer_init(&timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL_SOFT);
 	timer.function = hrtimer_handler;
-	hrtimer_start(&timer, kt, HRTIMER_MODE_REL);
+	hrtimer_start(&timer, kt, HRTIMER_MODE_REL_SOFT);
 
 	return 0;
 }
@@ -98,9 +98,6 @@ static const struct snd_pcm_hardware dummy_pcm_hardware = {
 static int dummy_pcm_open(struct snd_pcm_substream *substream)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
-	snd_pcm_uframes_t period_size = runtime->period_size;
-	unsigned int rate = runtime->rate;
-	unsigned long secs, nsecs;
 	subs = substream;
 
 	runtime->hw = dummy_pcm_hardware;
@@ -122,11 +119,6 @@ static int dummy_pcm_open(struct snd_pcm_substream *substream)
 			err = model->capture_constraints(substream->runtime);
 	}
 #endif
-
-	secs = period_size / rate;
-	period_size %= rate;
-	nsecs = div_u64((u64)period_size * 1000000000UL + rate - 1, rate);
-	kt = ktime_set(secs, nsecs);
 
 	printk("%s(): %d\n", __func__, __LINE__);
 
@@ -172,6 +164,28 @@ static int dummy_pcm_hw_free(struct snd_pcm_substream *substream)
 
 static int dummy_pcm_prepare(struct snd_pcm_substream *substream)
 {
+	struct snd_pcm_runtime *runtime = substream->runtime;
+	snd_pcm_uframes_t period_size = runtime->period_size;
+	unsigned int rate = runtime->rate;
+	unsigned long secs, nsecs;
+
+	printk("%s(): %d period_size = %lu rate = %u\n",
+			__func__, __LINE__, period_size, rate);
+
+	secs = period_size / rate;
+	printk("%s(): %d secs = %lu\n", __func__, __LINE__, secs);
+
+	period_size %= rate;
+	printk("%s(): %d period_size = %lu\n", __func__, __LINE__, period_size);
+
+	nsecs = div_u64((u64)period_size * 1000000000UL + rate - 1, rate);
+	printk("%s(): %d nsecs = %lu\n", __func__, __LINE__, nsecs);
+
+	kt = ktime_set(secs, nsecs);
+	// kt = ktime_set(0, MS_TO_NS(DELAY_MS));
+
+	printk("%s(): %d %lu %lu\n", __func__, __LINE__, secs, nsecs);
+
 	printk("%s(): %d\n", __func__, __LINE__);
 	return 0;
 }
