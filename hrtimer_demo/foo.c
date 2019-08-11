@@ -12,6 +12,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/slab.h>
 #include <linux/hrtimer.h>
 
 #define STR(x) _STR(x)
@@ -24,38 +25,119 @@
 
 #define VERSION STR(VERSION_PREFIX-MAJOR_VERSION.MINOR_VERSION.PATCH_VERSION)
 
-#define MS_TO_NS(x) (x * 1E6L)
-#define DELAY_MS 500L
+#define msecs_to_nsecs(x) (x * 1000000UL)
+#define DELAY_MS 500UL
 
-struct hrtimer_
+struct __hrtimer {
+        struct hrtimer timer;
+        struct timer_ops *ops;
+        ktime_t interval;
+        ktime_t delay;
+        struct snd_pcm_substream *substream;
+        void *priv;
+        spinlock_t lock;
+	atomic_t running;
+};
 
-static struct hrtimer timer;
-ktime_t kt;
+struct timer_ops {
+        int (*start)(struct hrtimer *timer);
+        int (*stop)(struct hrtimer *timer);
+	int (*set)(struct hrtimer *timer,
+		const unsigned long delay_secs,
+		const unsigned long delay_nsecs,
+		const unsigned long interval_secs,
+		const unsigned long interval_nsecs);
+};
 
-static enum hrtimer_restart  hrtimer_handler(struct hrtimer *timer)
+static struct __hrtimer *hrtimer_create(
+                enum hrtimer_restart (*handler)(struct hrtimer *),
+                struct timer_ops *ops)
 {
+        struct __hrtimer *__timer = kzalloc(sizeof(*__timer), GFP_KERNEL);
+        if (!__timer)
+                return ERR_PTR(-ENOMEM);
+
+        hrtimer_init(&__timer->timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+        __timer->timer.function = handler;
+        __timer->ops = ops;
+        spin_lock_init(&__timer->lock);
+
+        return __timer;
+}
+
+static void hrtimer_destroy(struct hrtimer *timer)
+{
+        struct __hrtimer *__timer
+                        = container_of(timer, struct __hrtimer, timer);
+        kfree(__timer);
+}
+
+static struct __hrtimer *__timer;
+
+static int timer_start(struct hrtimer *timer)
+{
+        struct __hrtimer *__timer
+                = container_of(timer, struct __hrtimer, timer);
+
+        hrtimer_start(timer, __timer->delay, HRTIMER_MODE_REL);
+
+        return 0;
+}
+
+static int timer_stop(struct hrtimer *timer)
+{
+        hrtimer_cancel(timer);
+        return 0;
+}
+
+static int timer_set(struct hrtimer *timer,
+		const unsigned long delay_secs,
+		const unsigned long delay_nsecs,
+		const unsigned long interval_secs,
+		const unsigned long interval_nsecs)
+{
+        struct __hrtimer *__timer
+                        = container_of(timer, struct __hrtimer, timer);
+
+	__timer->delay = ktime_set(delay_secs, delay_nsecs);
+	__timer->interval = ktime_set(interval_secs, interval_nsecs);
+	
+        return 0;
+}
+
+struct timer_ops timer_ops = {
+	.start = timer_start,
+	.stop = timer_stop,
+	.set = timer_set,
+};
+
+static enum hrtimer_restart hrtimer_handler(struct hrtimer *timer)
+{
+        struct __hrtimer *__timer
+                        = container_of(timer, struct __hrtimer, timer);
+
 	printk("%s(): %d\n", __func__, __LINE__);
 
-	hrtimer_forward_now(timer, kt);
+	hrtimer_forward_now(timer, __timer->interval);
 	return HRTIMER_RESTART;
 }
 
 static int __init foo_init(void)
 {
-	printk("%s(): %d\n", __func__, __LINE__);
-
-	kt = ktime_set(0, MS_TO_NS(DELAY_MS));
-	hrtimer_init(&timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-	timer.function = hrtimer_handler;
-	hrtimer_start(&timer, kt, HRTIMER_MODE_REL);
+	__timer = hrtimer_create(hrtimer_handler, &timer_ops);
+	if (IS_ERR(__timer))
+		return PTR_ERR(__timer);
+	__timer->ops->set(&__timer->timer, 0, 0, 0, msecs_to_nsecs(DELAY_MS));
+	__timer->ops->start(&__timer->timer);
 
 	return 0;
 }
 
 static void __exit foo_exit(void)
 {
-	printk("%s(): %d\n", __func__, __LINE__);
-	hrtimer_cancel(&timer);
+	__timer->ops->stop(&__timer->timer);
+	hrtimer_destroy(&__timer->timer);
+	__timer = NULL;
 }
 
 module_init(foo_init);
