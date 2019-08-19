@@ -1,31 +1,26 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
+#include <linux/fs.h>
+#include <linux/slab.h>
+#include <linux/string.h>
 #include <linux/kthread.h> 
 #include <linux/err.h> 
-#include <linux/fs.h>
-#include <linux/slab.h>
-
-/* *********************************************************** */
-
-#include <linux/init.h>
-#include <linux/string.h>
-#include <linux/module.h>
-#include <linux/fs.h>
-#include <linux/slab.h>
 
 #include "track.h"
+#include "kernel_io.h"
 
-#define CARD 1
+#define CARD 3
 #define DEVICE 0
 
 static struct task_struct * capture_task;
 
 static int track_thread(void *data)
 {
-	char *buffer;
+	int ret, size;
+	char *buf;
+	struct file *filp;
 	struct pcm *pcm;
-	int size;
 
 	struct pcm_config config = {
 			.channels 		= 2,
@@ -38,8 +33,10 @@ static int track_thread(void *data)
 			.silence_threshold 	= 0,
 	};
 
-	printk("\n\n%s(): in the thead function\n\n", __func__);
-	
+	filp = filp_open("/home/pi/Documents/dummy.pcm", O_RDWR | O_CREAT, 0666);
+	if (IS_ERR(filp))
+		return PTR_ERR(filp);
+
 	pcm = dummy_pcm_open(CARD, DEVICE, PCM_IN, &config);
 
 	if (!pcm || !pcm_is_ready(pcm)) {
@@ -49,22 +46,31 @@ static int track_thread(void *data)
 
 	size = pcm_frames_to_bytes(pcm, pcm_get_buffer_size(pcm));
     
-	buffer = kzalloc(size, GFP_KERNEL);
+	buf = kzalloc(size, GFP_KERNEL);
     
 	printk("Playing sample: %u ch, %u hz, %u bit\n", 
-						config.channels, 
-						config.rate, 
-						pcm_format_to_bits(config.format));
+				config.channels, 
+				config.rate, 
+				pcm_format_to_bits(config.format));
 
 	do {
-		if(dummy_pcm_read(pcm, buffer, size)){
+		if(dummy_pcm_read(pcm, buf, size)){
 			printk("%s(): Error playing sample\n", __func__);
 			break;
 		}
+
+		ret = write_file(filp, buf, size);
+		if (ret < 0)
+			break;
+
 	} while (!kthread_should_stop());
 
 	dummy_pcm_close(pcm);
+	kfree(buf);
+	filp_close(filp, NULL);
+
 	printk("\n\n%s(): dummy_pcm_close(pcm)\n\n", __func__);
+
 	return 0;
 }
 

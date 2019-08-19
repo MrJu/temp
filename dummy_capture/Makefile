@@ -5,7 +5,7 @@
 
 KERN_DIR := /lib/modules/$(shell uname -r)/build
 
-dummy-objs := track.o capture.o
+dummy-objs := track.o capture.o kernel_io.o
 obj-m := dummy.o
 
 all:
