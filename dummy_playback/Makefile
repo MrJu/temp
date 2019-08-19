@@ -5,7 +5,7 @@
 
 KERN_DIR := /lib/modules/$(shell uname -r)/build
 
-dummy-objs := track.o playback.o
+dummy-objs := track.o playback.o sine.o
 obj-m := dummy.o
 
 all:

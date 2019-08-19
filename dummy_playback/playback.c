@@ -15,18 +15,18 @@
 #include <linux/slab.h>
 
 #include "track.h"
+#include "sine.h"
 
-#define CARD 0
+#define CARD 1
 #define DEVICE 0
 
 static struct task_struct * play_task;
 
 static int track_thread(void *data)
 {
-	char *buffer;
+	int size, i;
+	char *buf;
 	struct pcm *pcm;
-	int size;
-	unsigned long i = 0;
 
 	struct pcm_config config = {
 			.channels 		= 2,
@@ -62,26 +62,24 @@ static int track_thread(void *data)
 
 	size = pcm_frames_to_bytes(pcm, pcm_get_buffer_size(pcm));
     
-	buffer = kzalloc(size, GFP_KERNEL);
-    	memset(buffer, 0, size);
-    
-	for(i = 0; i < size; i++){
-    		buffer[i] = i / 4;
-	}
+	buf = kzalloc(size, GFP_KERNEL);
 
+	fill_16_bits_sine_wav(buf, config.channels, pcm_get_buffer_size(pcm));
+    
 	printk("Playing sample: %u ch, %u hz, %u bit\n", 
-						config.channels, 
-						config.rate, 
-						pcm_format_to_bits(config.format));
+				config.channels, 
+				config.rate, 
+				pcm_format_to_bits(config.format));
 
 	do {
-		if(dummy_pcm_write(pcm, buffer, size)){
+		if(dummy_pcm_write(pcm, buf, size)){
 			printk("%s(): Error playing sample\n", __func__);
 			break;
 		}
 	} while (!kthread_should_stop());
 
 	dummy_pcm_close(pcm);
+	kfree(buf);
 	printk("\n\n%s(): dummy_pcm_close(pcm)\n\n", __func__);
 	return 0;
 }
