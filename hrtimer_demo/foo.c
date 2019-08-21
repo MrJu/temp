@@ -13,6 +13,7 @@
 
 #include <linux/module.h>
 #include <linux/slab.h>
+#include <linux/timekeeping32.h>
 #include <linux/hrtimer.h>
 
 #define STR(x) _STR(x)
@@ -26,13 +27,23 @@
 #define VERSION STR(VERSION_PREFIX-MAJOR_VERSION.MINOR_VERSION.PATCH_VERSION)
 
 #define msecs_to_nsecs(x) (x * 1000000UL)
-#define DELAY_MS 500UL
+#define DELAY_MS 1UL
+
+struct time {
+	struct timespec this_ts;
+	struct timespec last_ts;
+	unsigned long int diff_ts;
+	struct timeval this_val;
+	struct timeval last_val;
+	unsigned long int diff_val;
+};
 
 struct __hrtimer {
         struct hrtimer timer;
         struct timer_ops *ops;
         ktime_t interval;
         ktime_t delay;
+	struct time time;
         struct snd_pcm_substream *substream;
         void *priv;
         spinlock_t lock;
@@ -116,7 +127,26 @@ static enum hrtimer_restart hrtimer_handler(struct hrtimer *timer)
         struct __hrtimer *__timer
                         = container_of(timer, struct __hrtimer, timer);
 
-	printk("%s(): %d\n", __func__, __LINE__);
+	__timer->time.last_val = __timer->time.this_val;
+	do_gettimeofday(&__timer->time.this_val);
+	__timer->time.diff_val
+		= (__timer->time.this_val.tv_sec
+				- __timer->time.last_val.tv_sec)*1000000
+		+ (__timer->time.this_val.tv_usec
+				- __timer->time.last_val.tv_usec);
+
+	__timer->time.last_ts = __timer->time.this_ts;
+	getnstimeofday(&__timer->time.this_ts);
+	__timer->time.diff_ts
+		= (__timer->time.this_ts.tv_sec
+				- __timer->time.last_ts.tv_sec)*1000000000
+		+ (__timer->time.this_ts.tv_nsec
+				- __timer->time.last_ts.tv_nsec);
+
+	printk("Andrew : %s %s %d %luus %luns\n",
+		__FILE__, __func__, __LINE__,
+		__timer->time.diff_val,
+		__timer->time.diff_ts);
 
 	hrtimer_forward_now(timer, __timer->interval);
 	return HRTIMER_RESTART;
