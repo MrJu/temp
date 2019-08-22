@@ -13,7 +13,7 @@
 
 #include <linux/module.h>
 #include <linux/slab.h>
-#include <linux/timekeeping32.h>
+#include <linux/time.h>
 #include <linux/hrtimer.h>
 
 #define STR(x) _STR(x)
@@ -36,6 +36,7 @@ struct time {
 	struct timeval this_val;
 	struct timeval last_val;
 	unsigned long int diff_val;
+	unsigned int valid;
 };
 
 struct __hrtimer {
